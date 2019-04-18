@@ -1,0 +1,8 @@
+.venv/
+*.gbk
+*.fna
+*.icm
+*.motif
+*.csv
+*.detail
+*.predict
