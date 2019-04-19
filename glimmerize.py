@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import signal
+import os
 import sys
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter, FileType
 from collections import OrderedDict
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def cslice(s, i, j):
 
 
 def parse_cds(path):
-	for record in SeqIO.parse(str(path), "genbank"):
+	for record in SeqIO.parse(path, "genbank"):
 		for feature in record.features:
 			if feature.type == "CDS":
 				yield record, feature, feature.location
@@ -41,8 +42,11 @@ def parse_argv(argv):
 		formatter_class=ArgumentDefaultsHelpFormatter
 	)
 	parser.add_argument(
-		"path",
-		type=Path
+		"file",
+		type=FileType()
+	)
+	parser.add_argument(
+		"-prefix", "--prefix"
 	)
 	parser.add_argument(
 		"-nups", "--nups", type=int, default=25
@@ -59,11 +63,16 @@ def parse_argv(argv):
 
 	args = parser.parse_args(argv)
 
+	args.prefix = args.prefix or args.file.name
+
 	return args
 
 
 def main(argv):
 	args = parse_argv(argv[1:])
+
+	path = Path(args.prefix)
+	os.makedirs(path.parent, exist_ok=True)
 
 	key_id = args.key_id
 	key_desc = args.key_description
@@ -73,30 +82,31 @@ def main(argv):
 	training = []
 	upstream = []
 
-	for idx, ele in enumerate(parse_cds(args.path), start=1):
-		record, feature, location = ele
-		trecord = feature.extract(record)[:-args.trim]
-		codon = str(trecord.seq[:3])
-		if codon in codons:
+	with args.file as file:
+		for idx, ele in enumerate(parse_cds(file), start=1):
+			record, feature, location = ele
+			trecord = feature.extract(record)[:-args.trim]
+			codon = str(trecord.seq[:3])
+			if codon in codons:
 
-			codons[codon] += 1
+				codons[codon] += 1
 
-			start, end, strand = location.start, location.end, " +-"[location.strand]
+				start, end, strand = location.start, location.end, " +-"[location.strand]
 
-			fid = feature.qualifiers.get(key_id, [f"cds-{idx}"])[0]
-			trecord.id = f"{fid}|{start + 1}-{end - args.trim}|{strand}"
-			trecord.description = feature.qualifiers.get(key_desc, [""])[0]
+				fid = feature.qualifiers.get(key_id, [f"cds-{idx}"])[0]
+				trecord.id = f"{fid}|{start + 1}-{end - args.trim}|{strand}"
+				trecord.description = feature.qualifiers.get(key_desc, [""])[0]
 
-			urecord = cslice(record, start - args.nups, start)
-			urecord.id = f"{fid}|{start + 1 - args.nups}-{start}|{strand}"
-			urecord.description = trecord.description
+				urecord = cslice(record, start - args.nups, start)
+				urecord.id = f"{fid}|{start + 1 - args.nups}-{start}|{strand}"
+				urecord.description = trecord.description
 
-			training.append(trecord)
-			upstream.append(urecord)
+				training.append(trecord)
+				upstream.append(urecord)
 
-	SeqIO.write(training, args.path.with_suffix(".training.fna"), "fasta")
-	SeqIO.write(upstream, args.path.with_suffix(".upstream.fna"), "fasta")
-	with args.path.with_suffix(".startuse.csv").open("w") as file:
+	SeqIO.write(training, path.with_suffix(".training.fna"), "fasta")
+	SeqIO.write(upstream, path.with_suffix(".upstream.fna"), "fasta")
+	with path.with_suffix(".startuse.csv").open("w") as file:
 		total = sum(codons.values())
 		print(*(f"{val / total:0.3f}" for val in codons.values()), sep=",", file=file)
 
