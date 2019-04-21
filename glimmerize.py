@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
-import signal
 import os
 import sys
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter, FileType
 from collections import OrderedDict
 from pathlib import Path
+from signal import signal, SIGPIPE, SIG_DFL
 
 from Bio import SeqIO
 
@@ -29,11 +29,6 @@ def parse_cds(path):
 		for feature in record.features:
 			if feature.type == "CDS":
 				yield record, feature, feature.location
-
-
-def signal_handler(sig, frame):
-	print("You pressed Ctrl+C!")
-	sys.exit(0)
 
 
 def parse_argv(argv):
@@ -85,8 +80,13 @@ def main(argv):
 	with args.file as file:
 		for idx, ele in enumerate(parse_cds(file), start=1):
 			record, feature, location = ele
-			trecord = feature.extract(record)[:-args.trim]
-			codon = str(trecord.seq[:3])
+
+			try:
+				trecord = feature.extract(record)[:-args.trim]
+				codon = str(trecord.seq[:3])
+			except ValueError:
+				codon = ""
+
 			if codon in codons:
 
 				codons[codon] += 1
@@ -97,12 +97,16 @@ def main(argv):
 				trecord.id = f"{fid}|{start + 1}-{end - args.trim}|{strand}"
 				trecord.description = feature.qualifiers.get(key_desc, [""])[0]
 
-				urecord = cslice(record, start - args.nups, start)
-				urecord.id = f"{fid}|{start + 1 - args.nups}-{start}|{strand}"
-				urecord.description = trecord.description
-
 				training.append(trecord)
-				upstream.append(urecord)
+
+				uidx = start - args.nups
+				topo = record.annotations.get("topology", "linear")
+				urecord = record[uidx:start] if topo == "linear" else cslice(record, uidx, start)
+
+				if len(urecord) > 0:
+					urecord.id = f"{fid}|{start + 1 - args.nups}-{start}|{strand}"
+					urecord.description = trecord.description
+					upstream.append(urecord)
 
 	SeqIO.write(training, path.with_suffix(".training.fna"), "fasta")
 	SeqIO.write(upstream, path.with_suffix(".upstream.fna"), "fasta")
@@ -114,5 +118,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
-	signal.signal(signal.SIGINT, signal_handler)
+	signal(SIGPIPE, SIG_DFL)
 	sys.exit(main(sys.argv))
